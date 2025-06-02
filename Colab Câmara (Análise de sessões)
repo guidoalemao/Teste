@@ -1,0 +1,81 @@
+import pandas as pd
+from google.colab import auth
+import gspread
+from gspread_dataframe import get_as_dataframe
+
+# Autentica o Google Drive e Google Sheets
+auth.authenticate_user()
+from google.auth import default
+creds, _ = default()
+gc = gspread.authorize(creds)
+
+# Função para analisar eventos do tipo "Sessão Solene"
+def analisar_sessoes_solene(sheet_url):
+    # Abre o Google Sheet pelo URL
+    spreadsheet = gc.open_by_url(sheet_url)
+
+    total_eventos = 0
+    total_dias_unicos = set()
+    resumo_mensal = {}
+
+    # Lê todas as abas do Google Sheet
+    for worksheet in spreadsheet.worksheets():
+        print(f"Analisando a aba: {worksheet.title}")
+
+        # Converte os dados da aba para um DataFrame
+        df = get_as_dataframe(worksheet, evaluate_formulas=True)
+
+        # Certifique-se de que a coluna 'DATA' está no formato string
+        if 'DATA' in df.columns:
+            df['DATA'] = df['DATA'].apply(lambda x: str(x).strip() if not pd.isnull(x) else None)
+
+        # Filtra apenas as linhas que possuem "Sessão Solene" na coluna "Evento"
+        sessoes_solene = df[df['Evento'].str.contains("Sessão Solene", na=False, case=False)].copy()
+
+        # Identifica o formato de data com base na aba
+        formato_data = '%Y-%m-%d' if worksheet.title == '2023' else '%d/%m/%Y'
+
+        # Tenta converter as datas e identifica inválidos
+        sessoes_solene.loc[:, 'DATA_CONVERTIDA'] = pd.to_datetime(sessoes_solene['DATA'], format=formato_data, errors='coerce')
+        invalidos = sessoes_solene[sessoes_solene['DATA_CONVERTIDA'].isna()]['DATA']
+
+        if not invalidos.empty:
+            print(f"Valores inválidos na aba {worksheet.title}:")
+            print(invalidos.unique())
+
+        # Filtra apenas as linhas com datas válidas
+        sessoes_solene = sessoes_solene.dropna(subset=['DATA_CONVERTIDA'])
+
+        # Certifique-se de que há dados para processar
+        if sessoes_solene.empty:
+            print(f"A aba {worksheet.title} não contém dados válidos após a limpeza.")
+            continue
+
+        # Atualiza contadores e agrupa por mês/ano
+        total_eventos += len(sessoes_solene)
+        dias_unicos = sessoes_solene['DATA_CONVERTIDA'].dt.date.unique()
+        total_dias_unicos.update(dias_unicos)
+
+        sessoes_por_mes = sessoes_solene.groupby([sessoes_solene['DATA_CONVERTIDA'].dt.year, sessoes_solene['DATA_CONVERTIDA'].dt.month])
+        for (ano, mes), grupo in sessoes_por_mes:
+            nome_mes = pd.to_datetime(f"{ano}-{mes}-01").strftime("%B")
+            chave_mes_ano = f"{nome_mes} de {ano}"
+
+            if chave_mes_ano not in resumo_mensal:
+                resumo_mensal[chave_mes_ano] = {'eventos': 0, 'dias': set()}
+
+            resumo_mensal[chave_mes_ano]['eventos'] += len(grupo)
+            resumo_mensal[chave_mes_ano]['dias'].update(grupo['DATA_CONVERTIDA'].dt.date.unique())
+
+    # Formata os resultados
+    print("\nResumo Geral")
+    print(f"Total de eventos 'Sessão Solene': {total_eventos}")
+    print(f"Total de dias únicos com 'Sessão Solene': {len(total_dias_unicos)}")
+
+    print("\nResumo Mensal")
+    for mes_ano, dados in resumo_mensal.items():
+        print(f"{mes_ano}: {dados['eventos']} eventos - {len(dados['dias'])} dias diferentes")
+
+# Substitua 'sua_sheet_url' pelo URL do Google Sheet
+sheet_url = 'https://docs.google.com/spreadsheets/d/12GwwQIzpAvtuODM3iWtmKVciOUSN4NEjkOMCRRghtKA/edit?gid=771460354#gid=771460354'
+analisar_sessoes_solene(sheet_url)
