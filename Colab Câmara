@@ -1,0 +1,774 @@
+from google.colab import auth
+from google.auth import default
+import gspread
+import pandas as pd
+import re
+
+#
+#
+# Autenticação
+#
+#
+auth.authenticate_user()
+creds, _ = default()
+gc = gspread.authorize(creds)
+
+#
+#
+# Planilha ORIGEM
+#
+#
+planilha_origem = gc.open('teste_colab').worksheet('Página1')
+data_origem = planilha_origem.get_all_records()
+df_origem = pd.DataFrame(data_origem)
+
+#
+#
+# Correção de horario
+#
+#
+
+# Preencher valores ausentes e garantir que a coluna seja string
+df_origem['HORÁRIO'] = df_origem['HORÁRIO'].fillna('').astype(str)
+
+# Separar o ID do horário
+df_origem[['id', 'horario_completo']] = df_origem['HORÁRIO'].apply(
+    lambda x: x.split('\n', 1) if '\n' in x else [None, x]
+).apply(pd.Series)
+
+# Separar o horário de início e fim
+df_origem[['início', 'fim']] = df_origem['horario_completo'].apply(
+    lambda x: x.split(' - ', 1) if ' - ' in str(x) else [x, None]
+).apply(pd.Series)
+
+# Limpar possíveis espaços extras
+df_origem['início'] = df_origem['início'].str.strip()
+df_origem['fim'] = df_origem['fim'].str.strip()
+
+# Remover colunas temporárias
+df_origem = df_origem.drop(columns=['HORÁRIO', 'horario_completo'])
+
+# Organizar as colunas
+df_origem = df_origem[['id', 'início', 'fim'] + [col for col in df_origem.columns if col not in ['id', 'início', 'fim']]]
+
+def limpar_e_gerar_ids(serie):
+    id_atual = 0
+    ids_novos = []
+    for valor in serie:
+        if pd.isna(valor) or valor == '' or not re.match(r'^\d+$', str(valor)):
+            id_atual += 1
+            ids_novos.append(id_atual)
+        else:
+            id_atual = int(valor)
+            ids_novos.append(id_atual)
+    return ids_novos
+
+# Aplicar a função à coluna 'id'
+df_origem['id'] = limpar_e_gerar_ids(df_origem['id'])
+
+# Garantir que os IDs estão em ordem crescente
+df_origem = df_origem.sort_values('id').reset_index(drop=True)
+
+# Reatribuir IDs sequenciais
+df_origem['id'] = range(1, len(df_origem) + 1)
+
+#
+# Dataframes
+#
+
+# Criar df_vereadores a partir da coluna "VEREADOR(A)"
+df_vereadores = df_origem[["VEREADOR(A)"]].drop_duplicates().reset_index(drop=True)
+df_vereadores.columns = ["VEREADOR(A)"]
+df_vereadores["Busca"] = df_vereadores["VEREADOR(A)"]
+
+# DataFrame de salas
+worksheet_salas = gc.open('teste_colab').worksheet('Salas')
+df_salas = pd.DataFrame(worksheet_salas.get_all_records())
+
+# Criar um dicionário de mapeamento
+mapeamento = dict(zip(df_vereadores["Busca"], df_vereadores["VEREADOR(A)"]))
+
+#
+#
+# Mapeamento de "Vereadores"
+#
+#
+mapeamento_plus = {
+    "TV Câmara":"Rede Câmara São Paulo",
+    "Rede Câmara":"Rede Câmara São Paulo",
+    "Presidência da Câmara\n Municipal de\n São Paulo":"Presidência",
+    "Manoel del Rio\nPT":"Manoel Del Rio",
+    "Secretaria Geral Parlamentar\n(SGP)":"Secretaria Geral Parlamentar (SGP)",
+    "Jorge Wilson Filho\nRepublicanos":"Jorge Wilson Filho",
+    "Atílio Francisco\nRepublicanos":"Atílio Francisco",
+    "Gilson Barreto\nPSDB":"Gilson Barreto",
+    "Rubinho Nunes\nUnião Brasil":"Rubinho Nunes",
+    "Sandra Santana\nPSDB":"Sandra Santana",
+    "Presidência \nda Câmara Municipal de São Paulo":"Presidência",
+    "Presidência da Câmara Municipal de São Paulo":"Presidência",
+    "Adilson Amadeu\nUnião Brasil":"",
+    "Aurélio Nomura\nPSDB":"Aurélio Nomura",
+    "Camilo Cristófaro\nAvante 70":"Camilo Cristófaro",
+    "Secretaria de Recursos Humanos\n(SGA.1)":"Secretaria de Recursos Humanos (SGA-1)",
+    "Fernando Holiday\nRepublicanos":"Fernando Holiday",
+    "Assessoria Policial Militar\n(APM)":"Assessoria Policial Militar (APM)",
+    "Dra. Sandra Tadeu\nUnião Brasil":"Dra. Sandra Tadeu",
+    "Centro de Comunicação Institucional \n- Equipe de Eventos\n(CCI-1)":"Equipe de Eventos (CCI-1)",
+    "João Jorge\nPSDB":"João Jorge",
+    "Secretaria Geral Parlamentar\n(SGP)\n\nMesa Diretora da Câmara Municipal de São Paulo":"Secretaria Geral Parlamentar (SGP)",
+    "Equipe de Benefícios\n(SGA.13)":"Equipe de Benefícios (SGA-13)",
+    "Inspetoria da Câmara Municipal de São Paulo (GCM - ICAM)":"Inspetoria (ICAM)",
+    "Sidney Cruz\nSolidariedade":"Sidney Cruz",
+    "Cerimonial\n- Câmara Municipal de São Paulo":"Cerimonial",
+    "Adilson Amadeu\nUNIÃO":"Adilson Amadeu",
+    "Adilson Amadeu\nUnião Brasil":"Adilson Amadeu",
+    "Alessandro Guedes\nPT":"Alessandro Guedes",
+    "Alfredinho\nPT":"Alfredinho",
+    "André Santos\nREPUBLICANOS":"André Santos",
+    "André Santos\nRepublicanos":"André Santos",
+    "Antônio Donato\nPT":"Antônio Donato",
+    "Arselino Tatto\nPT":"Arselino Tatto",
+    "Atílio Francisco\nREPUBLICANOS":"Atílio Francisco",
+    "Aurélio Nomura\nPSD":"Aurélio Nomura",
+    "Beto do Social\nPODE":"Beto do Social",
+    "Beto do Social\nPodemos":"Beto do Social",
+    "Bombeiro Major Palumbo\nPP":"Bombeiro Major Palumbo",
+    "Camilo Cristófaro\nAVANTE":"Camilo Cristófaro",
+    "Carlos Bezerra Jr.\nPSD":"Carlos Bezerra Jr.",
+    "Celso Giannazi\nPSOL":"Celso Giannazi",
+    "Coronel Salles\nPSD":"Coronel Salles",
+    "Cris Monteiro\nNOVO":"Cris Monteiro",
+    "Cris Monteiro\nNovo":"Cris Monteiro",
+    "Daniel Annenberg\nPSB":"Daniel Annenberg",
+    "Danilo do Posto de Saúde\nPODE":"Danilo do Posto de Saúde",
+    "Danilo do Posto de Saúde\nPodemos":"Danilo do Posto de Saúde",
+    "Dr. Adriano Santos\nPT":"Dr. Adriano Santos",
+    "Dr. Milton Ferreira\nPODE":"Dr. Milton Ferreira",
+    "Dr. Milton Ferreira\nPodemos":"Dr. Milton Ferreira",
+    "Dr. Nunes Peixeiro\nMDB":"Dr. Nunes Peixeiro",
+    "Dra. Sandra Tadeu\nPL":"Dra. Sandra Tadeu",
+    "Edir Sales\nPSD":"Edir Sales",
+    "Eduardo Suplicy\nPT":"Eduardo Suplicy",
+    "Elaine do Quilombo Periférico\nPSOL":"Elaine do Quilombo Periférico",
+    "Elaine do Quilombo\nPSOL":"Elaine do Quilombo Periférico",
+    "Eli Corrêa\nUNIÃO":"Eli Corrêa",
+    "Eli Corrêa\nUnião Brasil":"Eli Corrêa",
+    "Eliseu Gabriel\nPSB":"Eliseu Gabriel",
+    "Ely Teruel\nMDB":"Ely Teruel",
+    "Fabio Riva\nMDB":"Fabio Riva",
+    "Fábio Riva\nMDB":"Fabio Riva",
+    "Fernando Holiday\nPL":"Fernando Holiday",
+    "George Hato\nMDB":"George Hato",
+    "Gilberto Nascimento Jr.\nPL":"Gilberto Nascimento Jr.",
+    "Gilson Barreto\nMDB":"Gilson Barreto",
+    "Gilson Barreto\nPSDB":"Gilson Barreto",
+    "Hélio Rodrigues\nPT":"Hélio Rodrigues",
+    "Isac Félix\nPL":"Isac Félix",
+    "Isac Felix\nPL":"Isac Félix",
+    "Jair Tatto\nPT":"Jair Tatto",
+    "Janaina Lima\nMDB":"Janaina Lima",
+    "Janaína Lima\nMDB":"Janaina Lima",
+    "Janaina Lima\nPP":"Janaina Lima",
+    "Janaína Lima\nPP":"Janaina Lima",
+    "João Ananias\nPT":"João Ananias",
+    "João Jorge\nMDB":"João Jorge",
+    "Jorge Wilson Filho\nREPUBLICANOS":"Jorge Wilson Filho",
+    "Jorge \nWilson Filho\nREPUBLICANOS":"Jorge Wilson Filho",
+    "Jorge\n Wilson Filho\nREPUBLICANOS":"Jorge Wilson Filho",
+    "Jorge Wilson Filho\nRepublicanos":"Jorge Wilson Filho",
+    "Jorge \nWilson Filho\nRepublicanos":"Jorge Wilson Filho",
+    "Jorge\n Wilson Filho\nRepublicanos":"Jorge Wilson Filho",
+    "Jussara Basso\nPSB":"Jussara Basso",
+    "Luana Alves\nPSOL":"Luana Alves",
+    "Luana Alves \nPSOL":"Luana Alves",
+    "Luana Alves\n PSOL":"Luana Alves",
+    "Luna Zarattini\nPT":"Luna Zarattini",
+    "Manoel Del Rio\nPT":"Manoel Del Rio",
+    "Marcelo Messias\nMDB":"Marcelo Messias",
+    "Marlon Luz\nMDB":"Marlon Luz",
+    "Milton Leite\nUNIÃO":"Milton Leite",
+    "Milton Leite\nUnião Brasil":"Milton Leite",
+    "Missionário José Olimpio\nPL":"Missionário José Olimpio",
+    "Paulo Frange\nMDB":"Paulo Frange",
+    "Police Neto\nPSD":"Police Neto",
+    "Professor Toninho Vespoli\nPSOL":"Toninho Vespoli",
+    "Professor\n Toninho Vespoli\nPSOL":"Toninho Vespoli",
+    "Professor \nToninho Vespoli\nPSOL":"Toninho Vespoli",
+    "Prof. Toninho Vespoli\nPSOL": "Toninho Vespoli",
+    "Reis\nPT":"Reis",
+    "Ricardo Teixeira\nUNIÃO":"Ricardo Teixeira",
+    "Ricardo Teixeira\nUnião Brasil":"Ricardo Teixeira",
+    "Ricardo Teixeira \nUnião Brasil":"Ricardo Teixeira",
+    "Ricardo Teixeira\n União Brasil":"Ricardo Teixeira",
+    "Rinaldi Digilio\nUNIÃO":"Rinaldi Digilio",
+    "Rinaldi Digilio\nUnião Brasil":"Rinaldi Digilio",
+    "Roberto Tripoli\nPV":"Roberto Tripoli",
+    "Rodolfo Despachante\nPP":"Rodolfo Despachante",
+    "Rodrigo Goulart\nPSD":"Rodrigo Goulart",
+    "Rubinho Nunes\nUNIÃO":"Rubinho Nunes",
+    "Rute Costa\nPL":"Rute Costa",
+    "Rute Costa\nPSDB":"Rute Costa",
+    "Sandra Santana\nMDB":"Sandra Santana",
+    "Sansão Pereira\nREPUBLICANOS":"Sansão Pereira",
+    "Sansão Pereira\nRepublicanos":"Sansão Pereira",
+    "Senival Moura\nPT":"Senival Moura",
+    "Sidney Cruz\nMDB":"Sidney Cruz",
+    "Silvia da Bancada Feminista\nPSOL":"Silvia da Bancada Feminista",
+    "Silvia da\nBancada\nFeminista\nPSOL":"Silvia da Bancada Feminista",
+    "Silvia da\n Bancada\n Feminista\n PSOL":"Silvia da Bancada Feminista",
+    "Silvia da \nBancada \nFeminista \nPSOL":"Silvia da Bancada Feminista",
+    "Sonaira Fernandes\nPL":"Sonaira Fernandes",
+    "Thammy Miranda\nPSD":"Thammy Miranda",
+    "Waldir Júnior\nPSD":"Waldir Júnior",
+    "Xexéu Tripoli\nUNIÃO":"Xexéu Tripoli",
+    "Xexéu Tripoli\nPSDB":"Xexéu Tripoli",
+    "Xexéu Tripoli\nUnião Brasil":"Xexéu Tripoli",
+    "Edson Japão\nNOVO":"Edson Japão",
+    "Edson Japão\nNovo":"Edson Japão",
+
+}
+
+df_origem["VEREADOR(A)"] = df_origem["VEREADOR(A)"].replace(mapeamento)
+df_origem["VEREADOR(A)"] = df_origem["VEREADOR(A)"].replace(mapeamento_plus)
+
+
+# Verificar valores não mapeados na coluna 'VEREADOR(A)'
+valores_originais = df_origem["VEREADOR(A)"].unique() # Removed the extra ')'
+valores_mapeados = set(mapeamento.keys()).union(set(mapeamento_plus.keys()))
+
+#
+#
+# Mapeamento dos locais
+#
+#
+mapeamento_local = {
+    'Salão Nobre\n\nSala Tiradentes': 'Salão Nobre',
+    'Sala Tiradentes': 'Sala Tiradentes',
+    'Plenário 1º de Maio': 'Plenário 1º de Maio',
+    'Saguão de Entrada José Mentor': 'Saguão de Entrada José Mentor',
+    'Plenário 1º de Maio\n\n(Apoio)\nAuditório Prestes Maia': 'Plenário 1º de Maio',
+    'Salão Nobre': 'Salão Nobre',
+    'Auditório Freitas Nobre': 'Auditório Freitas Nobre',
+    'Salão Nobre\n\n(Apoio)\nSala Tiradentes': 'Salão Nobre',
+    'Auditório \nFreitas Nobre\nTérreo - Externo': 'Auditório Freitas Nobre',
+    'Sala Sérgio\n Vieira de Melo\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Sala Sérgio \nVieira de Mello\n1º SS': 'Sala Sérgio Vieira de Mello',
+    'Sala Oscar \nPedroso Horta\n1º SS': 'Sala Oscar Pedroso Horta',
+    'Sala Sérgio Vieira de Mello\n1º SS': 'Sala Sérgio Vieira de Mello',
+    'Sala Oscar \nPedroso Horta\n1º SS\n\n(Apoio)\nSala Sérgio Vieira de Mello\n1º SS': 'Sala Oscar Pedroso Horta',
+    'Sala Oscar Pedroso Horta\n1º SS': 'Sala Oscar Pedroso Horta',
+    'Centro Educacional Unificado (CEU) Paulistano - Rua Aparecida do Taboado, São Paulo - SP': 'Atividades Externas / Outros',
+    'Sala Oscar Pedrosos Horta\n1SS': 'Sala Oscar Pedroso Horta',
+    'Associação Beneficente Irmã Idelfranca \n Rua Edalberto dos Santos, 313, Vila Piracicaba, São Paulo - SP': 'Atividades Externas / Outros',
+    'Centro Cultural \nSão Paulo\nMetrô Vergueiro \nRua Vergueiro, 1000 - Liberdade, São Paulo - SP': 'Atividades Externas / Outros',
+    'Centro Educacional Esportivo (CE) Oswaldo Brandão (Vila Brasilândia) \n- Avenida Michihisa Murata, 120, Jardim Maristela, São Paulo - SP': 'Atividades Externas / Outros',
+    'Auditório Virtual 1': 'Auditório Virtual',
+    'Salão Nobre\n\n(Retransmissão)\nSala Sérgio Vieira de Mello\n\n(Retransmissão)\nSala Oscar Pedroso Horta': 'Salão Nobre',
+    'Salão Nobre\n\n(Apoio)\nSala Tiradentes\n\n(Retransmissão)\nSala Oscar Pedroso Horta': 'Salão Nobre',
+    'Salão Nobre\n\n(Retransmissão)\nSala Tiradentes': 'Salão Nobre',
+    'Theatro Municipal Praça Ramos de Azevedo, s/n República, \nSão Paulo - SP': 'Atividades Externas / Outros',
+    'UNEAFRO Brasil Rua Abolição, 418, Bela Vista, São Paulo - SP': 'Atividades Externas / Outros',
+    'Saguão de Entrada José Mentor\nTérreo': 'Saguão de Entrada José Mentor',
+    'Sala Sérgio \nVieira de Mello\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Sala Tiradentes\n8° Andar': 'Sala Tiradentes',
+    'Auditório \nPrestes Maia\n1° Andar': 'Auditório Prestes Maia',
+    'Plenário\n1° de Maio\n1° Andar': 'Plenário 1º de Maio',
+    'Plenário\n1 ° de Maio\n 1° \nAndar': 'Plenário 1º de Maio',
+    'Plenário \n1° de Maio \n1°Andar': 'Plenário 1º de Maio',
+    'Sala Oscar \nPedroso Horta\n1SS': 'Sala Oscar Pedroso Horta',
+    'Salão Nobre\n8° Andar\n\n(Apoio)\nSala Tiradentes\n8° Andar': 'Salão Nobre',
+    'Saguão de Entrada \nJosé Mentor\nTérreo': 'Saguão de Entrada José Mentor',
+    'Plenário \n1º de Maio \n1º andar': 'Plenário 1º de Maio',
+    'Sala Adoniran Barbosa e Espaço Missão -Centro Cultural de São Paulo \nRua Vergueiro, 1000, Liberdade, São Paulo - SP': 'Atividades Externas / Outros',
+    'Salão Nobre\n8° Andar\n\n(Apoio)\nSala Tiradentes\n8° Andar\n\n(Retransmissão)\nSala Sérgio Vieira de Mello\n1SS': 'Salão Nobre',
+    'Associação Cultural e Desportiva Nikkei de São Miguel Paulista\nPraça São João de Cortês, 35, São Miguel Paulista, São Paulo - SP': 'Atividades Externas / Outros',
+    'Salão Nobre\n8° Andar\n\n(Apoio)\nSala Tiradentes\n8° Andar\n\n(Retransmissão)\nPlenário\n1° de Maio\n1° Andar\n\n(Retransmissão)\nAuditório\nPrestes Maia\n1° Andar': 'Salão Nobre',
+    'Plenário \n1° de Maio\n1° Andar\n\n(Apoio)\nAuditório Prestes Maia\n1° Andar\n\n(Apoio)\nSala Sérgio \nVieira de Mello\n1SS\n\n(Apoio)\nSala Oscar Pedroso Horta\n1SS': 'Plenário 1º de Maio',
+    'Sala Sérgio \nVieira de Mello\n1SS\n\n(Apoio)\nSala Oscar \nPedroso Horta\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Obelisco aos Heróis de 32 Praça Ibrahim Nobre, s/n, Vila Mariana, São Paulo/SP': 'Atividades Externas / Outros',
+    'Sala Oscar\nPedroso Horta\n1°SS': 'Sala Oscar Pedroso Horta',
+    'Sala Sérgio \nVieira de Mello\n1°SS': 'Sala Sérgio Vieira de Mello',
+    'Auditório\nPrestes Maia\n1° Andar': 'Auditório Prestes Maia',
+    'Auditório\nPrestes Maia\n1º andar': 'Audiotório Prestes Maia',
+    'Sala Oscar Pedroso Horta\n1°SS': 'Sala Oscar Pedroso Horta',
+    'Sala Oscar\n Pedroso Horta\n1ºSS': 'Sala Oscar Pedroso Horta',
+    'Salão Nobre\n8º andar\n\n\n(Retransmissão)\nSala Tiradentes\n8º andar\n\n\n(Retransmissão)\nAuditório\nPrestes Maia\n1º andar': 'Salão Nobre',
+    'Sala Oscar\nPedroso Horta\n1ºSS': 'Sala Oscar Pedroso Horta',
+    'Rua Tanque Velho, 941 - Vila Nivi, São Paulo - SP': 'Atividades Externas / Outros',
+    'Sala Adoniran Barbosa e Espaço Missão -Centro Cultural de São Paulo \nRua Vergueiro, 1000, Liberdade, São Paulo - SP': 'Atividades Externas / Outros',
+    'Salão Nobre\n8° Andar\n\n\n(Apoio)\nSala Tiradentes\n8° Andar': 'Salão Nobre',
+    'Plenário\n1º de Maio\n1º Andar': 'Plenário 1º de Maio',
+    'Sala Sérgio\nVieira de Mello\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Plenário \n1° de Maio\n1° Andar\n\n(Retransmissão)\nSala Sérgio \nVieira de Mello\n1SS\n\n(Apoio)\nSala Oscar Pedroso Horta\n1SS': 'Plenário 1º de Maio',
+    'Av. Tomás Rabêlo e Silva, S/N \n- Freguesia do Ó, São Paulo - SP': 'Atividades Externas / Outros',
+    'Sala Oscar Pedroso Horta\n1 SS': 'Sala Oscar Pedrosa Horta',
+    'Sala Sérgio Vieira de Mello\n1 SS': 'Sala Sérgio Vieira de Mello',
+    'Churrascaria Garzon 33\nAv. Morvan Dias de Figueiredo, 2163, Vila Guilherme, São Paulo - SP': 'Atividades Externas / Outros',
+    'Salão Nobre\n8° Andar\n\n(Apoio)\nSala Tiradentes\n8º Andar': 'Salão Nobre',
+    'R. Dom Tomás de Noronha, 262 - Conj. Promorar Estrada da Parada, São Paulo - SP': 'Atividades Externas / Outros',
+    'Plenário \n1º de Maio\n1° Andar': 'Plenário 1º de Maio',
+    'Salão Nobre\n8º andar\n\n(Apoio)\nSala Tiradentes\n8° Andar': 'Salão Nobre',
+    'Assembleia de Deus \nMinistério Guaianases\n Estrada Dom João Nery, 4483, Vila Lourdes, São Paulo - SP': 'Atividades Externas / Outros',
+    'Auditório \nPrestes Maia\n1º andar': 'Auditório Prestes Maia',
+    'Sala Tiradentes\n8º andar': 'Sala Tiradentes',
+    'Salão Nobre\n8° Andar\n\n(apoio)\nSala Tiradentes\n8° Andar': 'Salão Nobre',
+    'Auditório Prestes Maia\n1° Andar': 'Auditório Prestes Maia',
+    'Sala Oscar Pedroso Horta\n1SS': 'Sala Oscar Pedroso Horta',
+    'Sala Sérgio Vieira de Mello\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Bloco do Beco R. Bento Barroso Pereira, 2\n Jardim Ibirapuera, São Paulo - SP': 'Atividades Externas / Outros',
+    'Plenário \n1° de Maio\n1º Andar': 'Plenário 1º de Maio',
+    'Plenário \n1° de Maio\n1° Andar': 'Plenário 1º de Maio',
+    'Auditório\n Prestes Maia\n1º andar': 'Auditório Prestes Maia',
+    'Salão Nobre\n8° Andar': 'Salão Nobre',
+    'Plenário \n1º de Maio\n1º andar': 'Plenário 1º de Maio',
+    'Salão Nobre\n8º andar': 'Salão Nobre',
+    'Maurício de Sousa Produções\nRua Werner Von Siemens, 111, Prédio 19, Espaço 01, Cond. E-business Park, Lapa de Baixo, São Paulo - SP': 'Atividades Externas / Outros',
+    'Auditório Prestes Maia\n1º Andar': 'Auditório Prestes Maia',
+    'Plenário \n1º de Maio\n1º Andar': 'Plenário 1º de Maio',
+    'Auditório Virtual\n\nCEU Parelheiros \nRua José Pedro Borba, 20 - Jd. Novo Parelheiros, São Paulo - SP': 'Auditório Virtual',
+    'Auditório \nPrestes Maia\n1º Andar': 'Auditório Prestes Maia',
+    'Sala Tiradentes\n8º Andar': 'Sala Tiradentes',
+    'Arena Corinthians\nBar do Zeca Pagodinho \n- Av. Miguel Ignácio Curi, 111 Vila Carmosina, São Paulo - SP': 'Atividades Externas / Outros',
+    'Auditório Virtual\n\nCEU Meninos Rua Barbinos, 111 - São João Clímaco, Heliópolis': 'Auditório Virtual',
+    'Auditório Prestes Maia\n1º andar': 'Auditório Prestes Maia',
+    'Auditório Virtual\n\nCEU Guarapiranga Estrada da Baronesa, 1120 - Parque Bologne, São Paulo - SP': 'Auditório Virtual',
+    'Salão Nobre\n8º andar\n\n(Retransmissão)\nSala Sérgio Vieira de Mello\n1SS': 'Salão Nobre',
+    'Sala Sérgio \nVieira de Mello\n1SS\n\n(Apoio)\nSala Oscar Pedroso Horta\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Auditório\n Prestes Maia\n1° Andar': 'Auditório Prestes Maia',
+    'Salão Nobre\n8° Andar\n\n(Apoio)\nSala Tiradentes\n8° Andar\n\n(Retransmissão)\nSala Sérgio \nVieira de Mello\n1SS': 'Salão Nobre',
+    'Sala Sérgio Vieira de Mello\n1SS\n\n(Apoio)\nSala Tiradentes\n8º andar': 'Sala Sérgio Vieira de Mello',
+    'Salão Nobre\n8° Andar\n\n(Apoio)\nPlenário \n1° de Maio\n1° Andar': 'Salão Nobre',
+    'Fábrica de Cultura da Brasilândia\nAv. General Penha Brasil, 2508 - Brasilândia, São Paulo - SP': 'Atividades Externas / Outros',
+    'Restaurante \nParis 6 Classique \nRua Haddock Lobo, nº 1240 - Cerqueira César, São Paulo - SP': 'Atividades Externas / Outros',
+    'Sala Sérgio Vieira Mello\n1SS': 'Sala Sérgio Vieira de Mello',
+    'Plenário\n1º de Maio\n1º andar': 'Plenário 1º de Maio',
+    'Theatro Municipal\nPraça Ramos de Azevedo, s/n - República\nSão Paulo - SP': 'Atividades Externas / Outros',
+    'Plenário \n1° de Maio\n1° andar': 'Plenário 1º de Maio',
+    'Salão Nobre\n8º andar\n\n(Apoio)\nSala Tiradentes\n8° andar': 'Salão Nobre',
+    'Salão Nobre\n8º andar\n\n(Retransmissão)\nSala Tiradentes\n8º andar\n\n(Retransmissão)\nSala Sérgio \nVieira de Mello\n1SS': 'Salão Nobre',
+    'Salão Nobre\n8º andar\n\n(Apoio)\nAuditório Prestes Maia\n1º andar': 'Salão Nobre',
+    'Salão Nobre\n8º andar\n\n(Apoio)\nSala Tiradentes\n8º andar': 'Salão Nobre',
+    'Av. Imirim, 2496 Imirim, São Paulo - SP': 'Atividades Externas / Outros',
+    'Auditório\n Prestes Maia\n1º Andar' 'Auditório\nPrestes Maia\n1º Andar': 'Auditório Prestes Maia',
+    'Associação Comunitária do Jardim das Oliveiras\nAv. Dr. Almiro Leal da Costa, 456, Jardim das Oliveiras - São Paulo - SP': 'Atividades Externas / Outros',
+    'Sociedade Amigos de Casa Verde \nR. Dr. César Castiglioni Júnior, 577 - Casa Verde, São Paulo - SP': 'Atividades Externas / Outros',
+    'Plenário \n1° de Maio\n1 Andar': 'Plenário 1º de Maio',
+    'Salão Nobre\n8° Andar\n\n(Apoio e Retransmissão)\nSala Tiradentes\n8° Andar\n\n(Retransmissão)\nSala Sérgio \nVieira de Mello\n1SS\n\n(Retransmissão)\nSala Oscar \nPedroso Horta\n1SS': 'Salão Nobre',
+    'Palácio Anchieta': 'Palácio Anchieta',
+    'Auditório \nPrestes Maia\n1° Andar\n\n(Apoio)\nPlenário\n1° de Maio\n1° Andar': 'Auditório Prestes Maia',
+    'Salão Nobre\n8° Andar\n\n(Retransmissão)\nSala Tiradentes\n8° Andar': 'Salão Nobre',
+    'Salão Nobre\n8° Andar\n\n(Retransmissão)\nSala Tiradentes\n8° Andar\n\n(Retransmissão)\nSala Sérgio Vieira de Mello\n1SS': 'Salão Nobre',
+    'Auditório\n Prestes Maia\n1º Andar': 'Auditório Prestes Maia',
+    'Auditório\nPrestes Maia\n1º Andar': 'Auditório Prestes Maia',
+    'Plenário\n1º de Maio\n1° Andar': 'Plenário 1º de Maio',
+    'Paróquia Nossa Senhora dos Prazeres\nAv. Gen. Ataliba Leonel, 3013 - Parada Inglesa, São Paulo - SP': 'Atividades Externas / Outros',
+    'Casa de Cultura Salvador Ligabue \n- Largo da Matriz de Nossa Senhora do Ó, 215 - Freguesia do Ó, São Paulo': 'Atividades Externas / Outros',
+    'Sala Sérgio \nVieira de Mello\n1SS\n\n(Apoio) \nSala Tiradentes\n8º andar': 'Sala Sérgio Vieira de Mello',
+    'Salão Nobre\n8º andar\n\n(Apoio)\nSala Tiradentes\n8º Andar': 'Salão Nobre',
+}
+
+# Coluna 'Externo' para armazenar valores antes da substituição
+df_origem['Externo'] = df_origem['LOCAL'].apply(lambda x: x if x in mapeamento_local and mapeamento_local[x] == 'Atividades Externas / Outros' else '')
+
+# Aplicar o mapeamento para substituir valores na coluna 'LOCAL'
+df_origem['LOCAL'] = df_origem['LOCAL'].replace(mapeamento_local)
+
+
+# Verificar valores não mapeados na coluna 'LOCAIS'
+nao_mapeados_local = df_origem[~df_origem["LOCAL"].isin(mapeamento_local.values())]
+
+if not nao_mapeados_local.empty:
+    print("Locais não mapeados:")
+    print(nao_mapeados_local["LOCAL"].unique())
+
+# Cessão
+cessao_pattern = r'\[Cessão de espaço\]|\[CESSÃO DE ESPAÇO\]'
+df_origem["Cessão"] = df_origem["EVENTOS"].str.contains(cessao_pattern, regex=True, case=False)
+df_origem["EVENTOS"] = df_origem["EVENTOS"].str.replace(cessao_pattern, "", regex=True, case=False)
+
+#
+#
+# Parte de NECESSIDADES
+#
+#
+# Dicionário normal
+necessidades_dict = {
+    "NEC_Gravacao": "Gravação",
+    "NEC_Transcricao": "transcrição",
+    "Evento_Fechado": "Não online",
+    "NEC_Fotografo": "fotógrafo",
+    "Exposicao":"______________________________"
+
+}
+# Dicionário em lista
+necessidades_dict_de_listas = {
+	"NEC_Microfone": {"01 microfone com fio longo","02 microfones com fio longo","01 microfone com pedestal","02 microfones com pedestal","01 pedestal para microfone","02 pedestais para microfone","01 microfone com fio longo e pedestal","02 microfone com fio longo e pedestal","03 microfones com fio longo e pedestal","02 microfones com pedestais"},
+	"NEC_Mesa_Apoio": {"01 mesa de apoio com 02 cadeiras","01 mesa de apoio na recepção","01 mesa de apoio","02 mesas de apoio na recepção","02 mesa de apoio na recepção","02 mesas de apoio (recepção)","01 mesa de apoio (recepção)","03 mesas de apoio na recepção","01 mesa pequena de apoio","2 mesas de apoio na recepção"},
+	"NEC_Estacionamento": {"estacionamento no 2SS","estacionamento 2SS"},
+	"NEC_Apoio_CCI2": {"Solicitar apoio do CCI-02","CCI-02","Solicitar apoio do CCI-2"},
+  "Circuito_off": {"desligar circuito interno","Circuito interno fechado","Desligar circuito interno","Desligar Circuito Interno"},
+	"NEC_Hino_Auto": {"Hino Nacional no automático","Hino Nacional no Automático"},
+	"Banda_GCM": {"Hino Nacional será executado pela Banda da GCM","Hino Nacional será executado pelo Coral da GCM","Hino Nacional será executado pela Banda e pelo Coral da GCM","Hino Nacional Brasileiro e Hino Nacional Chinês serão executados pela Banda da GCM","Hino Nacional será executado pela Coral da GCM","e Coral da GCM","Hino Nacional será executado pelo coral da GCM","Hino Nacional será executado pelo Banda da GCM","Hino Nacional será executado pela banda da GCM","Hino Nacional do Brasil e o Hino Nacional da Coreia do Sul serão executados pela Banda da GCM","Hino Nacional será executado pela Banda ou Coral da GCM"},
+	"Banda_PM": {"Hino Nacional será executado pela Banda da PM","A Banda da PM executará o Hino Nacional"},
+  "NEC_Balcao_PM": {"Liberar o balcão em frente ao Prestes Maia","Liberar balcão em frente ao Prestes Maia","Liberar uso do balcão em frente ao Prestes Maia"},
+	"NEC_Copa_Plenario": {"Liberar uso da copa do Plenário","Liberar o uso da copa do Plenário","Liberar uso da Copa do Plenário","Liberação de uso de Copa do Plenário","Liberar a copa do Plenário"},
+	"Galeria":{"Liberar a Galeria do Plenário","Liberar uso da galeria do Plenário","Liberar a galeria do Plenário","Liberar acesso à Galeria do Plenário","Liberar galeria","Liberar acesso à galeria do Plenário","Liberar acesso a galeria do Plenário"},
+	"NEC_Apoio_CTI": {"Solicitar apoio no CTI","Solicitar apoio do CTI","Solicitar apoio ao CTI","Solicitar o apoio do CTI","Solicitar apoio CTI","Solicitar Apoio do CTI"},
+  "NEC_Caixa_Som": {"01 caixa de som amplificada","01 caixa de\nsom amplificada","01 caixa de \nsom amplificada","01 caixa de\n som amplificada","01 caixa de\nsom\namplificada"},
+  "NEC_Caixa_Som": {"01 caixa de\nsom amplificada","01 caixa de \nsom \namplificada","01 caixa de\n som\n amplificada", "01 caixa de \nsom","01 caixa de som amplificada"},
+  "NEC_Copa": {"copa (água na mesa)","copa (água na\nmesa)","Copa (água na mesa)"," Copa água na mesa"},
+  "NEC_VIP": {"Disponibilizar sala VIP da Presidência","Liberar Sala VIP da Presidência","Liberar uso da Sala VIP do Plenário","Liberar acesso à Sala VIP da Presidência","Liberar uso da sala VIP do Plenário","Liberar a sala VIP da Presidência","Liberar uso da Sala VIP da Presidência","liberar sala VIP da presidência","Liberar acesso à Sala Vip do Plenário","Liberar uso da sala VIP da Presidência","Liberar uso da sala vip do Plenário"}
+
+}
+
+# Limpar locais secundarios da aba necessidades
+def limpar_locais_secundarios(necessidades):
+    if not isinstance(necessidades, str):
+        return necessidades
+
+# Lista de locais que podem aparecer como secundários
+    locais_secundarios = [
+        'Sala Tiradentes', 'Auditório Prestes Maia', 'Plenário 1º de Maio',
+        'Sala Oscar Pedroso Horta', 'Sala Sérgio Vieira de Mello', 'Salão Nobre'
+    ]
+
+# Criar um padrão regex que corresponda a qualquer um dos locais secundários
+    padrao = '|'.join(map(re.escape, locais_secundarios))
+
+# Remover todo o texto a partir do local secundário até o final da string
+    necessidades_limpas = re.split(f'({padrao})', necessidades)[0]
+
+    return necessidades_limpas.strip()
+
+# Aplicar a função de limpeza antes de processar as necessidades
+df_origem['Necessidades'] = df_origem['Necessidades'].apply(limpar_locais_secundarios)
+
+for coluna, texto in necessidades_dict.items():
+    df_origem[coluna] = df_origem["Necessidades"].str.contains(texto, case=False, na=False, regex=False)
+    df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(texto, "", case=False, regex=False)
+
+
+def verifica_e_remove_necessidades(necessidades, termos):
+    if not isinstance(necessidades, str):
+        return False, necessidades
+
+    for termo in termos:
+        if termo in necessidades:
+            necessidades = necessidades.replace(termo, '')
+            return True, necessidades.strip()
+    return False, necessidades
+
+# Adicionar colunas para cada chave do dicionário
+for chave, valores in necessidades_dict_de_listas.items():
+    df_origem[chave] = df_origem["Necessidades"].apply(lambda x: verifica_e_remove_necessidades(x, valores)[0])
+    df_origem["Necessidades"] = df_origem["Necessidades"].apply(lambda x: verifica_e_remove_necessidades(x, valores)[1])
+
+
+# Extrair o número de cadeiras extras
+df_origem["Cadeiras Extras"] = df_origem["Necessidades"].str.extract(r'(\d+)\s*cadeiras extras')
+
+# Convertendo a coluna "Cadeiras Extras" para número (inteiro)
+df_origem["Cadeiras Extras"] = pd.to_numeric(df_origem["Cadeiras Extras"], errors='coerce')
+
+# Remover o texto "Disponibilizar xx cadeiras extras" ou apenas "xx cadeiras extras"
+df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(r'Disponibilizar\s*\d+\s*cadeiras extras', '', regex=True)
+df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(r'Solicitar\s*\d+\s*cadeiras extras', '', regex=True)
+df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(r'\d+\s*cadeiras extras', '', regex=True)
+
+
+# Extrair os responsáveis (incluindo singular e plural)
+df_origem["Responsavel"] = (
+    df_origem["Necessidades"]
+    .str.extract(r"Responsável:\s*([\w\s]+)")
+    .fillna(df_origem["Necessidades"].str.extract(r"Responsáveis:\s*([\w\s,/]+)"))
+)
+
+# Remover o texto dos responsáveis
+df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(r"Responsável:\s*[\w\s]+", "", case=False, regex=True)
+df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(r"Responsáveis:\s*[\w\s,/]+", "", case=False, regex=True)
+df_origem["Responsavel"] = df_origem["Responsavel"].str.replace(",","",case=False,regex=False).str.replace("/",",",case=False,regex=False).str.strip()
+
+# Remover " e ", vírgulas extras, e fazer mais limpeza
+df_origem["Necessidades"] = df_origem["Necessidades"].str.replace(" e ", "", regex=True)\
+                                                     .str.replace("- ", "", regex=False)\
+                                                     .str.replace(",", "", regex=False)\
+                                                     .str.replace("-", "", regex=False)\
+                                                     .str.replace(".", "", regex=False)\
+                                                     .str.strip()
+
+df_origem['Necessidades'] = df_origem['Necessidades'].str.rstrip(' e')
+df_origem['Necessidades'] = df_origem['Necessidades'].str.rstrip(' :')
+
+# Remover horario e parenteses em "Necessidades"
+def remover_horas_e_parenteses(texto):
+    texto = re.sub(r'\b\d{2}:\d{2}\b', '', texto)
+    texto = texto.replace('(', '').replace(')', '')
+    texto = ' '.join(texto.split())
+    return texto
+
+# Aplicando a função à coluna
+df_origem['Necessidades'] = df_origem['Necessidades'].apply(remover_horas_e_parenteses)
+
+
+# Marcar múltiplos
+df_origem["Multiplas"] = ~df_origem["LOCAL"].isin(df_salas["Salas"])
+
+#
+#
+#
+# Hora de classificar em categorias, subcategorias e subsubcategorias
+# Esse processo é trabalhoso e exige atenção
+#
+#
+
+categorias = {
+    "Parlamentar": {
+        "Reunião": [
+            "Reunião de Comissão Ordinária",
+            "Reunião de Comissão Extraordinária",
+            "Reunião de Comissão Parlamentar de Inquérito",
+            "Reunião de Subcomissão",
+            "Reunião do Colégio de Líderes"
+        ],
+        "Sessão": [
+            "Solene",
+            "Ordinária",
+            "Extraordinária"
+        ],
+        "Audiência Pública": [
+            "Orçamento",
+            "Zoneamento",
+            "Outros"
+        ]
+    },
+    "Institucional": {
+        "Reunião": [
+            "Reunião Interna",
+            "Reunião Externa",
+            "Reunião Intersecretarial",
+            "Licitação"
+        ],
+        "Acadêmico": [
+            "Treinamento",
+            "Público Externo",
+            "Curso"
+        ],
+        "Cultural": [
+            "Visita Guiada",
+            "Hasteamento",
+            "Gravação de Audiovisual"
+        ]
+    },
+    "Mandato": {
+        "Cultural": [
+            "Exposição",
+            "Acadêmico"
+        ],
+        "Reunião": [
+            "Reunião de Gabinete",
+            "Reunião de Liderança"
+        ],
+        "Solenidade": [
+            "Bairro",
+            "Grupo ou Associação",
+            "Político",
+            "Costumes"
+        ]
+    }
+}
+
+
+event_classification_rules = {
+    "reunião de gabinete": ("Mandato", "Reunião", "Reunião de Gabinete"),
+    "sessões extraordinárias": ("Parlamentar", "Sessão", "Extraordinária"),
+    "sessão ordinária e, após,": ("Parlamentar", "Sessão", None),
+    "concorrência pública": ("Institucional", None, None),
+    "solenidade": ("Mandato", "Solenidade", None),
+    "reunião ordinária semipresencial da comissão parlamentar de inquérito": ("Parlamentar", "Reunião", "Reunião de Comissão Parlamentar de Inquérito"),
+    "processo seletivo": ("Institucional", "Reunião", "Reunião Externa"),
+    "reunião com o efetivo da assessoria da polícia militar": ("Institucional", "Reunião", "Reunião Interna"),
+    "reunião de equipe da ouvidoria": ("Institucional", "Reunião", "Reunião Interna"),
+    "treinamento de sga.35": ("Institucional", "Acadêmico", "Treinamento"),
+    "treinamento secretaria geral parlamentar": ("Institucional", "Acadêmico", "Treinamento"),
+    "treinamento de integração para os novos gabinetes": ("Institucional", "Acadêmico", "Treinamento"),
+    "visita de alunos": ("Institucional", "Cultural","Visita Guiada"),
+    "reunião ordinária semipresencial da comissão permanente": ("Parlamentar", "Reunião", "Reunião de Comissão Ordinária"),
+    "reunião ordinária semipresencial da comissão extraordinária": ("Parlamentar", "Reunião", "Reunião de Comissão Extraordinária"),
+    "reunião da liderança": ("Mandato","Reunião","Reunião de Liderança"),
+    "audiência pública presencial da comissão": ("Parlamentar","Audiência Pública",None),
+    "audiência pública semipresencial da comissão": ("Parlamentar","Audiência Pública",None),
+    "reunião extraordinária semipresencial da subcomissão": ("Parlamentar", "Reunião", "Reunião de Subcomissão"),
+    "reunião ordinária semipresencial da subcomissão": ("Parlamentar", "Reunião", "Reunião de Subcomissão"),
+    "reunião interna da rede câmara": ("Institucional", "Reunião", "Reunião Interna"),
+    "sessão solene para a entrega de salva de prata": ("Parlamentar", "Sessão","Solene"),
+    "sessão cívica de culto aos símbolos nacionais": ("Institucional", "Cultural", "Hasteamento"),
+    "reunião extraordinária semipresencial da comissão permanente": ("Parlamentar", "Reunião", "Reunião de Comissão Ordinária"),
+    "reunião extraordinária semipresencial da comissão extraordinária": ("Parlamentar", "Reunião", "Reunião de Comissão Extraordinária"),
+    "reunião semipresencial de instalação da comissão permanente": ("Parlamentar", "Reunião", "Reunião de Comissão Ordinária"),
+    "reunião de assessoria": ("Mandato","Reunião","Reunião de Gabinete"),
+    "sessão solene para a entrega de título de cidad": ("Parlamentar", "Sessão","Solene"),
+    "sessão solene para a entrega de medalha anchieta": ("Parlamentar", "Sessão","Solene"),
+    "seleção de estagiários": ("Institucional","Reunião","Reunião Externa"),
+    "reunião semipresencial com o colégio de líderes": ("Parlamentar", "Reunião", "Reunião do Colégio de Líderes"),
+    "gravação do programa \"vossa excelência, a memória\"":("Institucional","Cultural","Gravação de Audiovisual"),
+    "gravação do programa “vossa excelência, a memória”":("Institucional","Cultural","Gravação de Audiovisual"),
+    "sessão ordinária":("Parlamentar", "Sessão","Ordinária"),
+    "audiência pública da comissão permanente":("Parlamentar","Audiência Pública",None),
+	"reunião de coordenadores da liderança do podemos": ("Mandato","Reunião","Reunião de Liderança"),
+	"curso de formação de guardas civis metropolitanos":("Institucional","Acadêmico","Curso"),
+	"reunião da comissão interna de prevenção de acidentes (cipa)":("Institucional","Reunião","Reunião Interna"),
+	"convenção municipal do psdb":("Cessão de Espaço","Convenção Partidária",None),
+	"oficina de agentes de governo aberto":("Institucional","Acadêmico","Curso"),
+	"curso “cidade constitucional”":("Institucional","Acadêmico","Curso"),
+	"reunião de instalação da comissão parlamentar de inquérito": ("Parlamentar", "Reunião", "Reunião de Comissão Parlamentar de Inquérito"),
+	"cursinho preparatório": ("Mandato","Cultural","Acadêmico"),
+	"reunião da rede câmara": ("Institucional","Reunião","Reunião Interna"),
+	"atividade com alunos do restaurante-escola": ("Institucional","Reunião","Reunião Interna"),
+	"reunião semipresencial de instalação da comissão extraordinária":("Parlamentar", "Reunião", "Reunião de Comissão Extraordinária"),
+	"sessão pública da concorrência que":("Institucional","Reunião","Licitação"),
+	"pregão presencial":("Institucional","Reunião","Licitação"),
+	"pregão público de":("Institucional","Reunião","Licitação")
+ }
+
+def classify_event_using_dict(event_name):
+    event_name_lower = event_name.lower()
+    for pattern, classification in event_classification_rules.items():
+        if pattern in event_name_lower:
+            return classification
+    return "","",""
+
+# Aplicar a classificação usando o dicionário
+df_origem["Categoria"], df_origem["Subcategoria"], df_origem["Subsubcategoria"] = zip(*df_origem["EVENTOS"].apply(classify_event_using_dict))
+
+# Atualizar os eventos onde a coluna Exposição tem valor True
+df_origem.loc[df_origem["Exposicao"] == True, ["Categoria", "Subcategoria", "Subsubcategoria"]] = ["Mandato", "Cultural", "Exposição"]
+
+# Eventos e Sessão Solene? Sessão Solene
+df_origem.loc[(df_origem['VEREADOR(A)'] == 'Equipe de Eventos (CCI-1)') & (df_origem['EVENTOS'].str.contains('Sessão Solene')), ['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Parlamentar', 'Sessão', 'Solene']
+
+# Eventos e Visita? Visita de Escola
+df_origem.loc[(df_origem['VEREADOR(A)'] == 'Equipe de Eventos (CCI-1)') & (df_origem['EVENTOS'].str.contains('Visita')), ['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Cultural', 'Visita Guiada']
+
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("SGA")) & (df_origem["EVENTOS"].str.contains("Treinamento")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Acadêmico', 'Treinamento']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("SGA")) & (df_origem["EVENTOS"].str.contains("Palestra")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Acadêmico', 'Treinamento']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("SGA")) & (df_origem["EVENTOS"].str.contains("Programa de Preparação para a Aposentadoria")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Acadêmico', 'Treinamento']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("SGA")) & (df_origem["EVENTOS"].str.contains("Centro de Educação Infantil")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Reunião', 'Reunião Interna']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("SGA")) & (df_origem["EVENTOS"].str.contains("Centro de Educação infantil")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Reunião', 'Reunião Interna']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("SGA")) & (df_origem["EVENTOS"].str.contains("Centro de Educação infantil")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Reunião', 'Reunião Interna']
+
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("Escola do Parlamento")) & (df_origem["EVENTOS"].str.contains("Cidade Constitucional")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Acadêmico', 'Curso']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("Escola do Parlamento")) & (df_origem["EVENTOS"].str.contains("Simpósio") | df_origem["EVENTOS"].str.contains("Palestra") | df_origem["EVENTOS"].str.contains("Seminário")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Acadêmico', 'Público Externo']
+df_origem.loc[(df_origem['VEREADOR(A)'].str.contains("Escola do Parlamento")) & (df_origem["EVENTOS"].str.contains("Entrevista")),['Categoria', 'Subcategoria', 'Subsubcategoria']] = ['Institucional', 'Cultural', "Gravação de Audiovisual"]
+#
+#Agora vamos exibir os não categorizados que tem muitas repetições
+#
+
+# Filtrando os eventos com colunas vazias em 'Categoria', 'Subcategoria' e 'Subsubcategoria'
+filtered_df = df_origem[(df_origem['Categoria'] == '') & (df_origem['Subcategoria'] == '') & (df_origem['Subsubcategoria'] == '')]
+
+# Contando a quantidade de vezes que cada evento aparece
+event_counts = filtered_df['EVENTOS'].value_counts()
+
+# Filtrando eventos que aparecem mais de 5 vezes
+filtered_event_counts = event_counts[event_counts > 3]
+filtered_event_counts_df = filtered_event_counts.reset_index()
+filtered_event_counts_df.columns = ['EVENTOS', 'Quantidade']
+
+# Exibindo os resultados
+print("Eventos sem classificação e com repetições")
+for evento in filtered_event_counts_df['EVENTOS']:
+	print(evento.lower())
+
+#printar o que de SGP ficou pra trás
+print("SGAs:")
+print(df_origem[(df_origem["VEREADOR(A)"].str.contains("SGA")) & (df_origem["Categoria"]=="")]["EVENTOS"])
+
+# List of vereadores provided by the user
+vereadores_list = [
+    "Adilson Amadeu", "Alessandro Guedes", "Alfredinho", "André Santos", "Antônio Donato", "Arselino Tatto",
+    "Atílio Francisco", "Aurélio Nomura", "Beto do Social", "Bombeiro Major Palumbo", "Camilo Cristófaro",
+    "Carlos Bezerra Jr.", "Celso Giannazi", "Coronel Salles", "Cris Monteiro", "Daniel Annenberg",
+    "Danilo do Posto de Saúde", "Dr. Adriano Santos", "Dr. Milton Ferreira", "Dr. Nunes Peixeiro",
+    "Dra. Sandra Tadeu", "Edir Sales", "Eduardo Suplicy", "Elaine do Quilombo Periférico", "Eli Corrêa",
+    "Eliseu Gabriel", "Ely Teruel", "Fabio Riva", "Fernando Holiday", "George Hato", "Gilberto Nascimento Jr.",
+    "Gilson Barreto", "Hélio Rodrigues", "Isac Félix", "Jair Tatto", "Janaina Lima", "João Ananias", "João Jorge",
+    "Jorge Wilson Filho", "Jussara Basso", "Luana Alves", "Luna Zarattini", "Manoel Del Rio", "Marcelo Messias",
+    "Marlon Luz", "Milton Leite", "Missionário José Olimpio", "Paulo Frange", "Police Neto", "Professor Toninho Vespoli",
+    "Reis", "Ricardo Teixeira", "Rinaldi Digilio", "Roberto Tripoli", "Rodolfo Despachante", "Rodrigo Goulart",
+    "Rubinho Nunes", "Rute Costa", "Sandra Santana", "Sansão Pereira", "Senival Moura", "Sidney Cruz",
+    "Silvia da Bancada Feminista", "Sonaira Fernandes", "Thammy Miranda", "Waldir Júnior", "Xexéu Tripoli",
+    "Edson Japão","Liderança do PODE","Liderança do PSB","Liderança do PSOL","Liderança do PT","Liderança do PTB"
+]
+
+# Filter uncategorized events where the 'Vereador' is in the provided list
+df_origem.loc[(df_origem['Categoria']=="") & (df_origem['VEREADOR(A)'].isin(vereadores_list)),"Categoria"] = "Mandato"
+
+df_origem.loc[df_origem['Cessão'] == True, 'Categoria'] = 'Cessão de Espaço'
+
+vereadores_institucional = [
+    "Cerimonial", "Procuradoria", "Presidência", "Mesa Diretora", "Escola do Parlamento",
+    "Assessoria Policial Militar (APM)", "Rede Câmara São Paulo",
+    "Comissão Interna de Prevenção de Acidentes e Assédio (CIPA)", "Assessoria de Imprensa",
+    "Centro de Comunicação Institucional (CCI)", "Equipe de Eventos (CCI-1)",
+    "Secretaria Geral Administrativa (SGA)", "Equipe de Apoio à Comissão de Julgamento de Licitações (SGA-9)",
+    "Secretaria de Recursos Humanos (SGA-1)", "Equipe de Benefícios (SGA-13)",
+    "Equipe de Seleção, Desenvolvimento e Avaliação de Pessoal (SGA-14)",
+    "Equipe de Gestão de Serviços II - Copa e Limpeza (SGA-35)", "Equipe de Desenvolvimento e Projeto (SGA-37)",
+    "Centro de Tecnologia da Informação (CTI)", "Inspetoria (ICAM)", "Ouvidoria",
+    "Restaurante Escola", "Diretoria de Comunicação Externa (DCE)"
+]
+
+# Atualizar a categoria para 'Institucional' onde necessário
+df_origem.loc[(df_origem['VEREADOR(A)'].isin(vereadores_institucional)) & (df_origem['Categoria']==""), 'Categoria'] = 'Institucional'
+df_origem.loc[(df_origem["EVENTOS"].str.contains("Reunião")) & (df_origem["Subcategoria"]==""),'Subcategoria'] = "Reunião"
+
+
+
+import pandas as pd
+
+# Função de classificação
+def classificar_evento(descricao_evento, regras_classificacao):
+    for regra, classificacao in regras_classificacao.items():
+        if regra in descricao_evento.lower():
+            return classificacao
+    return (None, None, None)
+
+# Aplicar a função de classificação
+df_origem[['Categoria', 'Subcategoria', 'Subsubcategoria']] = df_origem['EVENTOS'].apply(
+    lambda x: pd.Series(classificar_evento(x, event_classification_rules))
+)
+
+# Reordenar as colunas para que as categorias fiquem antes da coluna "Cessão"
+colunas = df_origem.columns.tolist()
+indice_cessao = colunas.index('Cessão')
+colunas = colunas[:indice_cessao] + ['Categoria', 'Subcategoria', 'Subsubcategoria'] + colunas[indice_cessao:]
+
+# Reordenar o DataFrame
+df_origem = df_origem[colunas]
+
+
+
+#
+#
+# Concertar erros
+#
+#
+
+df_origem = df_origem.replace([float('inf'), float('-inf')], None)
+
+for col in df_origem.select_dtypes(include=['float64']):
+    df_origem[col] = df_origem[col].astype('float32')
+
+df_origem = df_origem.fillna('')
+
+#
+#
+# Planilha de destino (NÃO ALTERAR)
+#
+#
+
+planilha_destino = gc.open('teste_colab').worksheet('Página2')
+data_to_update = [df_origem.columns.values.tolist()] + df_origem.values.tolist()
+planilha_destino.update(data_to_update)
+
+print('Sucesso')
