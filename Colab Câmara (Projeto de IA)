@@ -1,0 +1,84 @@
+import gspread
+from google.colab import auth
+from google.auth.transport.requests import Request
+from google.auth import default
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.cluster import KMeans
+import pandas as pd
+import pickle
+
+# Configuração do acesso ao Google Sheets no Google Colab
+auth.authenticate_user()
+credentials, _ = default()
+client = gspread.authorize(credentials)
+
+def load_sheet(sheet_url, sheet_name):
+    """Carrega uma planilha do Google Sheet como um DataFrame do pandas."""
+    sheet = client.open_by_url(sheet_url).worksheet(sheet_name)
+    data = sheet.get_all_records()
+    return pd.DataFrame(data)
+
+def update_sheet(sheet_url, sheet_name, dataframe):
+    """Atualiza colunas específicas em uma aba do Google Sheet."""
+    sheet = client.open_by_url(sheet_url).worksheet(sheet_name)
+    existing_data = pd.DataFrame(sheet.get_all_records())
+
+    # Atualizando apenas as colunas desejadas
+    for col in ['Categoria', 'Subcategoria', 'Subsubcategoria']:
+        existing_data[col] = dataframe[col]
+
+    # Enviando os dados atualizados para a planilha
+    sheet.update([existing_data.columns.values.tolist()] + existing_data.values.tolist())
+
+def train_model(dataframe):
+    """Treina um modelo de clustering com base nas colunas Categoria, Subcategoria e Subsubcategoria."""
+    vectorizer = TfidfVectorizer()
+    tfidf_matrix = vectorizer.fit_transform(dataframe['Evento'])
+
+    # Usando KMeans para agrupar eventos similares
+    kmeans = KMeans(n_clusters=len(dataframe['Categoria'].unique()), random_state=42)
+    dataframe['Cluster'] = kmeans.fit_predict(tfidf_matrix)
+
+    # Salvando o modelo e o vetor
+    with open('modelo_kmeans.pkl', 'wb') as f:
+        pickle.dump((kmeans, vectorizer), f)
+
+    return dataframe[['Categoria', 'Subcategoria', 'Subsubcategoria', 'Cluster']]
+
+def analyze_and_correct(new_dataframe, model_path='modelo_kmeans.pkl'):
+    """Analisa uma nova planilha e corrige as categorias com base no modelo treinado."""
+    with open(model_path, 'rb') as f:
+        kmeans, vectorizer = pickle.load(f)
+
+    tfidf_matrix = vectorizer.transform(new_dataframe['EVENTOS'])
+    clusters = kmeans.predict(tfidf_matrix)
+
+    corrected_data = []
+    for cluster in clusters:
+        match = trained_data[trained_data['Cluster'] == cluster].iloc[0]
+        corrected_data.append(match[['Categoria', 'Subcategoria', 'Subsubcategoria']].values.tolist())
+
+    corrected_df = pd.DataFrame(corrected_data, columns=['Categoria', 'Subcategoria', 'Subsubcategoria'])
+    corrected_df['EVENTOS'] = new_dataframe['EVENTOS']
+
+    return corrected_df
+
+#
+#
+# URLs das planilhas
+#
+#
+train_sheet_url = "https://docs.google.com/spreadsheets/d/1wk-i9M76-2txw9nivhEvaq1YnC0WSxk-D724WeSSaJ4/edit?gid=0#gid=0"
+train_sheet_name = "Página1"
+new_sheet_url = "https://docs.google.com/spreadsheets/d/1wk-i9M76-2txw9nivhEvaq1YnC0WSxk-D724WeSSaJ4/edit?gid=0#gid=0"
+new_sheet_name = "Página2"
+
+# Carregando dados de treino e treinando o modelo
+train_df = load_sheet(train_sheet_url, train_sheet_name)
+trained_data = train_model(train_df)
+save_to_sheet(train_sheet_url, "Modelo Treinado", trained_data)
+
+# Carregando novos dados e aplicando correção
+new_df = load_sheet(new_sheet_url, new_sheet_name)
+corrected_df = analyze_and_correct(new_df)
+update_sheet(new_sheet_url, new_sheet_name, corrected_df)
